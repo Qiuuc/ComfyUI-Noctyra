@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Test / IDE
+.pytest_cache/
+.vscode/
+.idea/
+
+# Logs / Temp / Backup
+*.log
+*.bak
+*.tmp
+
+# Claude Code
+.claude/
