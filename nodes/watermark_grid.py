@@ -1,12 +1,18 @@
 """
 全屏网格水印节点 - 独立控制行列密度
 """
-import numpy as np
-import torch
-import random
-from PIL import Image, ImageDraw
-
 import logging
+import random
+import torch
+from PIL import Image
+
+from ._utils import (
+    tensor_to_pil,
+    pil_to_tensor,
+    prepare_watermark_rgba,
+    apply_opacity,
+)
+
 logger = logging.getLogger("noctyra")
 
 
@@ -44,26 +50,6 @@ class AddGridWatermark:
     FUNCTION = "add_watermark"
     CATEGORY = "Noctyra/图片"
 
-    @staticmethod
-    def _tensor_to_pil(tensor):
-        arr = np.clip(255.0 * tensor.cpu().numpy().squeeze(), 0, 255).astype(np.uint8)
-        return Image.fromarray(arr)
-
-    @staticmethod
-    def _pil_to_tensor(pil_image):
-        return torch.from_numpy(np.array(pil_image).astype(np.float32) / 255.0).unsqueeze(0)
-
-    @staticmethod
-    def _mask_to_pil_l(mask_tensor, target_size):
-        m = mask_tensor
-        if m.dim() == 3:
-            m = m[0]
-        arr = np.clip(m.cpu().numpy() * 255.0, 0, 255).astype(np.uint8)
-        mask_pil = Image.fromarray(arr, mode="L")
-        if mask_pil.size != target_size:
-            mask_pil = mask_pil.resize(target_size, Image.Resampling.LANCZOS)
-        return mask_pil
-
     def add_watermark(
         self,
         图像,
@@ -83,134 +69,79 @@ class AddGridWatermark:
         if 图像 is None or len(图像) == 0:
             return (torch.zeros((0, 1, 1, 3)),)
 
-        # 准备水印 PIL 图像（RGBA）
-        if 水印图像 is not None:
-            try:
-                watermark_pil = self._tensor_to_pil(水印图像[0]).convert("RGBA")
+        watermark_pil = prepare_watermark_rgba(水印图像, 水印遮罩, 反转遮罩)
 
-                if 水印遮罩 is not None:
-                    mask_t = 水印遮罩[0] if 水印遮罩.dim() == 3 else 水印遮罩
-                    mask_l = self._mask_to_pil_l(mask_t, watermark_pil.size)
-                    if 反转遮罩:
-                        mask_l = mask_l.point(lambda p: 255 - p)
-                    r, g, b, _ = watermark_pil.split()
-                    watermark_pil = Image.merge("RGBA", (r, g, b, mask_l))
-            except Exception as e:
-                logger.error(f"水印图像处理失败: {e}")
-                watermark_pil = self._create_default_watermark()
-        else:
-            watermark_pil = self._create_default_watermark()
-
-        # 按分辨率分组，同分辨率同位置
+        # 按分辨率分组：同分辨率共享同一布局（位置序列）
         resolution_groups = {}
         for img_idx, img_tensor in enumerate(图像):
             h, w = img_tensor.shape[0], img_tensor.shape[1]
-            key = (w, h)
-            if key not in resolution_groups:
-                resolution_groups[key] = []
-            resolution_groups[key].append((img_idx, img_tensor))
+            resolution_groups.setdefault((w, h), []).append((img_idx, img_tensor))
 
         processed_images = [None] * len(图像)
 
         for (img_width, img_height), group in resolution_groups.items():
-            # 设置随机种子
+            # 种子：用户指定 > 0 时直接用；否则按尺寸派生（同尺寸 -> 同布局）
             if 随机种子 > 0:
                 seed = 随机种子
             else:
-                seed = (img_width * 73856093) ^ (img_height * 19349663)
-                seed = seed & 0xffffffffffffffff
+                seed = ((img_width * 73856093) ^ (img_height * 19349663)) & 0xffffffffffffffff
             rng = random.Random(seed)
 
-            # 处理主图
-            base_pil = self._tensor_to_pil(group[0][1]).convert("RGBA")
-
-            # 缩放水印
+            # 缩放 -> 不透明度 -> 旋转
             base_size = min(img_width, img_height)
             target_size = int(base_size * 水印大小比例)
-            wm_width, wm_height = watermark_pil.size
-            ratio = min(target_size / wm_width, target_size / wm_height)
-            new_width = max(1, int(wm_width * ratio))
-            new_height = max(1, int(wm_height * ratio))
-            resized_watermark = watermark_pil.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            wm_w, wm_h = watermark_pil.size
+            ratio = min(target_size / wm_w, target_size / wm_h)
+            resized_watermark = watermark_pil.resize(
+                (max(1, int(wm_w * ratio)), max(1, int(wm_h * ratio))),
+                Image.Resampling.LANCZOS,
+            )
+            resized_watermark = apply_opacity(resized_watermark, 不透明度)
 
-            # 调整不透明度
-            if 不透明度 < 1.0:
-                r, g, b, a = resized_watermark.split()
-                a = a.point(lambda p: int(p * 不透明度))
-                resized_watermark = Image.merge("RGBA", (r, g, b, a))
+            rotated_watermark = (
+                resized_watermark.rotate(旋转角度, expand=True, resample=Image.Resampling.BICUBIC)
+                if 旋转角度 != 0 else resized_watermark
+            )
+            rot_w, rot_h = rotated_watermark.size
 
-            # 旋转水印
-            if 旋转角度 != 0:
-                rotated_watermark = resized_watermark.rotate(
-                    旋转角度, expand=True, resample=Image.Resampling.BICUBIC
-                )
-            else:
-                rotated_watermark = resized_watermark
+            # 包围盒（长方形，水平/垂直独立）
+            min_box = int(base_size * 最小包围盒比例)
+            box_w = max(int(rot_w * 包围盒倍数), min_box)
+            box_h = max(int(rot_h * 包围盒倍数), min_box)
 
-            rot_width, rot_height = rotated_watermark.size
-
-            # 计算最小包围盒（基于图片短边）
-            min_box_size = int(base_size * 最小包围盒比例)
-
-            # 计算水平和垂直的包围盒（长方形，分别计算）
-            box_width = max(int(rot_width * 包围盒倍数), min_box_size)
-            box_height = max(int(rot_height * 包围盒倍数), min_box_size)
-
-            # 分别计算行列数（独立密度控制）
+            # 行列数（按密度 + 图片宽高比）
             base_cols = max(3, int(3 * 水平密度))
             base_rows = max(3, int(3 * 垂直密度))
-            
-            # 根据图片比例调整，确保不会太稀疏或太密集
             cols = max(2, int(base_cols * img_width / max(img_width, img_height)))
             rows = max(2, int(base_rows * img_height / max(img_width, img_height)))
 
-            # 计算网格起始位置（居中布局）
-            total_width = cols * box_width
-            total_height = rows * box_height
-            start_x = (img_width - total_width) // 2
-            start_y = (img_height - total_height) // 2
+            start_x = (img_width - cols * box_w) // 2
+            start_y = (img_height - rows * box_h) // 2
 
             # 预计算所有水印位置
             positions = []
             for row in range(rows):
                 for col in range(cols):
-                    # 包围盒左上角
-                    box_x = start_x + col * box_width
-                    box_y = start_y + row * box_height
+                    cx = start_x + col * box_w + box_w / 2
+                    cy = start_y + row * box_h + box_h / 2
+                    spare_x = (box_w - rot_w) / 2
+                    spare_y = (box_h - rot_h) / 2
+                    max_off_x = spare_x * min(最大随机偏移, 1.0)
+                    max_off_y = spare_y * min(最大随机偏移, 1.0)
+                    off_x = rng.uniform(-max_off_x, max_off_x) if max_off_x > 0 else 0
+                    off_y = rng.uniform(-max_off_y, max_off_y) if max_off_y > 0 else 0
+                    positions.append((
+                        int(cx - rot_w / 2 + off_x),
+                        int(cy - rot_h / 2 + off_y),
+                    ))
 
-                    # 包围盒中心
-                    center_x = box_x + box_width / 2
-                    center_y = box_y + box_height / 2
-
-                    # 计算剩余空间（包围盒减去水印尺寸的一半）
-                    spare_x = (box_width - rot_width) / 2
-                    spare_y = (box_height - rot_height) / 2
-
-                    # 在剩余空间内随机偏移（限制最大偏移比例）
-                    max_offset_x = spare_x * min(最大随机偏移, 1.0)
-                    max_offset_y = spare_y * min(最大随机偏移, 1.0)
-
-                    offset_x = rng.uniform(-max_offset_x, max_offset_x) if max_offset_x > 0 else 0
-                    offset_y = rng.uniform(-max_offset_y, max_offset_y) if max_offset_y > 0 else 0
-
-                    # 最终位置（水印左上角）
-                    final_x = int(center_x - rot_width / 2 + offset_x)
-                    final_y = int(center_y - rot_height / 2 + offset_y)
-
-                    positions.append((final_x, final_y))
-
-            # 应用水印到该分辨率的所有图片
+            # 应用到该分辨率的所有图片
             for img_idx, img_tensor in group:
-                pil_image = base_pil.copy() if img_idx == group[0][0] else self._tensor_to_pil(img_tensor).convert("RGBA")
-
-                for final_x, final_y in positions:
-                    # 只粘贴可见区域
-                    if final_x + rot_width > 0 and final_x < img_width and \
-                       final_y + rot_height > 0 and final_y < img_height:
-                        pil_image.paste(rotated_watermark, (final_x, final_y), rotated_watermark)
-
-                pil_image = pil_image.convert("RGB")
-                processed_images[img_idx] = self._pil_to_tensor(pil_image)
+                pil_image = tensor_to_pil(img_tensor).convert("RGBA")
+                for fx, fy in positions:
+                    if fx + rot_w > 0 and fx < img_width and fy + rot_h > 0 and fy < img_height:
+                        pil_image.paste(rotated_watermark, (fx, fy), rotated_watermark)
+                processed_images[img_idx] = pil_to_tensor(pil_image.convert("RGB"))
 
         # 防御：group 处理若中途异常漏填，用原图 fallback 避免 torch.cat 崩溃
         for idx, item in enumerate(processed_images):
@@ -220,16 +151,7 @@ class AddGridWatermark:
 
         return (torch.cat(processed_images, dim=0),)
 
-    def _create_default_watermark(self):
-        """创建默认水印图像"""
-        watermark_pil = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(watermark_pil)
-        draw.rectangle([0, 0, 100, 100], fill=(0, 0, 0, 100))
-        draw.text((20, 40), "Watermark", fill=(255, 255, 255, 200))
-        return watermark_pil
 
-
-# 节点映射
 NODE_CLASS_MAPPINGS = {
     "AddGridWatermark": AddGridWatermark,
 }

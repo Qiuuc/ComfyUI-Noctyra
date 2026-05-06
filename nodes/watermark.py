@@ -1,11 +1,17 @@
 """
 水印处理相关节点
 """
-import numpy as np
-import torch
-from PIL import Image, ImageDraw
-
 import logging
+import torch
+from PIL import Image
+
+from ._utils import (
+    tensor_to_pil,
+    pil_to_tensor,
+    prepare_watermark_rgba,
+    apply_opacity,
+)
+
 logger = logging.getLogger("noctyra")
 
 
@@ -43,28 +49,6 @@ class AddImageWatermark:
     FUNCTION = "add_watermark"
     CATEGORY = "Noctyra/图片"
 
-    @staticmethod
-    def _tensor_to_pil(tensor):
-        arr = np.clip(255.0 * tensor.cpu().numpy().squeeze(), 0, 255).astype(np.uint8)
-        return Image.fromarray(arr)
-
-    @staticmethod
-    def _pil_to_tensor(pil_image):
-        return torch.from_numpy(np.array(pil_image).astype(np.float32) / 255.0).unsqueeze(0)
-
-    @staticmethod
-    def _mask_to_pil_l(mask_tensor, target_size):
-        """把 MASK 张量（[H,W] 或 [1,H,W]）转换成与水印同尺寸的 L 模式 PIL 图像。
-        ComfyUI 约定 MASK 中 1.0 表示选中区域；这里把它当作水印的不透明度。"""
-        m = mask_tensor
-        if m.dim() == 3:
-            m = m[0]
-        arr = np.clip(m.cpu().numpy() * 255.0, 0, 255).astype(np.uint8)
-        mask_pil = Image.fromarray(arr, mode="L")
-        if mask_pil.size != target_size:
-            mask_pil = mask_pil.resize(target_size, Image.Resampling.LANCZOS)
-        return mask_pil
-
     def add_watermark(
         self,
         图像,
@@ -80,92 +64,62 @@ class AddImageWatermark:
         水印图像=None,
         水印遮罩=None,
     ):
-        # 准备水印 PIL 图像（RGBA），并把 MASK 应用到 alpha 通道
-        if 水印图像 is not None:
-            try:
-                watermark_pil = self._tensor_to_pil(水印图像[0]).convert("RGBA")
-
-                if 水印遮罩 is not None:
-                    # 取第一张 mask 与水印图像匹配
-                    mask_t = 水印遮罩[0] if 水印遮罩.dim() == 3 else 水印遮罩
-                    mask_l = self._mask_to_pil_l(mask_t, watermark_pil.size)
-                    if 反转遮罩:
-                        mask_l = mask_l.point(lambda p: 255 - p)
-                    r, g, b, _ = watermark_pil.split()
-                    watermark_pil = Image.merge("RGBA", (r, g, b, mask_l))
-            except Exception as e:
-                logger.error(f"水印图像处理失败: {e}")
-                watermark_pil = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
-                draw = ImageDraw.Draw(watermark_pil)
-                draw.rectangle([0, 0, 100, 100], fill=(0, 0, 0, 100))
-                draw.text((20, 40), "Watermark", fill=(255, 255, 255, 200))
-        else:
-            watermark_pil = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
-            draw = ImageDraw.Draw(watermark_pil)
-            draw.rectangle([0, 0, 100, 100], fill=(0, 0, 0, 100))
-            draw.text((20, 40), "Watermark", fill=(255, 255, 255, 200))
+        watermark_pil = prepare_watermark_rgba(水印图像, 水印遮罩, 反转遮罩)
 
         processed_images = []
         for img_tensor in 图像:
-            pil_image = self._tensor_to_pil(img_tensor).convert("RGBA")
+            pil_image = tensor_to_pil(img_tensor).convert("RGBA")
             img_width, img_height = pil_image.size
 
             # 等比缩放水印
             base_size = min(img_width, img_height)
             target_size = int(base_size * 水印大小比例)
-            wm_width, wm_height = watermark_pil.size
-            ratio = min(target_size / wm_width, target_size / wm_height)
-            new_width = max(1, int(wm_width * ratio))
-            new_height = max(1, int(wm_height * ratio))
-            resized_watermark = watermark_pil.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            wm_width, wm_height = resized_watermark.size
-
-            # 调整不透明度（在已应用 mask 的 alpha 上再乘一遍）
-            if 不透明度 < 1.0:
-                r, g, b, a = resized_watermark.split()
-                a = a.point(lambda p: int(p * 不透明度))
-                resized_watermark = Image.merge("RGBA", (r, g, b, a))
+            wm_w, wm_h = watermark_pil.size
+            ratio = min(target_size / wm_w, target_size / wm_h)
+            new_w = max(1, int(wm_w * ratio))
+            new_h = max(1, int(wm_h * ratio))
+            resized = watermark_pil.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            resized = apply_opacity(resized, 不透明度)
+            wm_w, wm_h = resized.size
 
             if 位置 == "全屏":
                 try:
-                    rot_img = resized_watermark.rotate(
+                    rot_img = resized.rotate(
                         全屏水印旋转角度, expand=True, resample=Image.Resampling.BICUBIC
                     )
-                    r_width, r_height = rot_img.size
-                    sx = max(1, int((r_width + 水平边距) / 全屏水印密度))
-                    sy = max(1, int((r_height + 垂直边距) / 全屏水印密度))
-                    offset, row_idx = sx // 2, 0
-                    for y in range(-r_height, img_height, sy):
-                        start_x = -r_width + (offset if (row_idx % 2) != 0 else 0)
+                    r_w, r_h = rot_img.size
+                    sx = max(1, int((r_w + 水平边距) / 全屏水印密度))
+                    sy = max(1, int((r_h + 垂直边距) / 全屏水印密度))
+                    offset = sx // 2
+                    row_idx = 0
+                    for y in range(-r_h, img_height, sy):
+                        start_x = -r_w + (offset if (row_idx % 2) else 0)
                         for x in range(start_x, img_width, sx):
-                            if 0 <= x + r_width and 0 <= y + r_height:
-                                pil_image.paste(rot_img, (x, y), rot_img)
+                            pil_image.paste(rot_img, (x, y), rot_img)
                         row_idx += 1
                 except Exception as e:
                     logger.error(f"全屏水印处理失败: {e}")
             else:
                 x_pos = (
                     水平边距 if "左" in 位置
-                    else (img_width - wm_width - 水平边距 if "右" in 位置
-                          else (img_width - wm_width) // 2)
+                    else (img_width - wm_w - 水平边距 if "右" in 位置
+                          else (img_width - wm_w) // 2)
                 )
                 y_pos = (
                     垂直边距 if "上" in 位置
-                    else (img_height - wm_height - 垂直边距 if "下" in 位置
-                          else (img_height - wm_height) // 2)
+                    else (img_height - wm_h - 垂直边距 if "下" in 位置
+                          else (img_height - wm_h) // 2)
                 )
                 x_pos = max(0, min(x_pos, img_width - 1))
                 y_pos = max(0, min(y_pos, img_height - 1))
-                pil_image.paste(resized_watermark, (x_pos, y_pos), resized_watermark)
+                pil_image.paste(resized, (x_pos, y_pos), resized)
 
-            # 转回 RGB，避免下游不支持 RGBA
             pil_image = pil_image.convert("RGB")
-            processed_images.append(self._pil_to_tensor(pil_image))
+            processed_images.append(pil_to_tensor(pil_image))
 
         return (torch.cat(processed_images, dim=0),)
 
 
-# 节点映射
 NODE_CLASS_MAPPINGS = {
     "AddImageWatermark": AddImageWatermark,
 }

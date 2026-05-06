@@ -24,7 +24,10 @@ class SaveImageNoMetadata:
         return {
             "required": {
                 "images": ("IMAGE",),
-                "filename_prefix": ("STRING", {"default": "Clean_Image"})
+                "filename_prefix": ("STRING", {"default": "Clean_Image"}),
+            },
+            "optional": {
+                "compress_level": ("INT", {"default": 4, "min": 0, "max": 9, "step": 1}),
             },
         }
 
@@ -33,7 +36,7 @@ class SaveImageNoMetadata:
     OUTPUT_NODE = True
     CATEGORY = "Noctyra/图片"
 
-    def save_images(self, images, filename_prefix="Clean_Image"):
+    def save_images(self, images, filename_prefix="Clean_Image", compress_level=4):
         if images is None or len(images) == 0:
             return {"ui": {"images": []}}
 
@@ -54,11 +57,10 @@ class SaveImageNoMetadata:
             file = f"{filename}_{counter:05}_.png"
 
             # pnginfo=None 确保不写入元数据
-            # compress_level=4 是官方默认压缩等级
             img.save(
                 os.path.join(full_output_folder, file),
                 pnginfo=None,
-                compress_level=4
+                compress_level=compress_level,
             )
 
             results.append({
