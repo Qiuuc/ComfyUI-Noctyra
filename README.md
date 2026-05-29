@@ -31,4 +31,4 @@ pip install -r requirements.txt
 
 ## 许可证
 
-[MIT](LICENSE)
+[GPL-3.0-or-later](LICENSE)
