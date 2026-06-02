@@ -17,9 +17,24 @@
 """
 Noctyra 节点公共工具
 """
+import os
+
 import numpy as np
 import torch
 from PIL import Image, ImageDraw
+
+# 插件根目录（nodes/_utils.py 上溯一级）。各模块统一引用，避免子目录后 __file__ 算错。
+PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def plugin_models_dir():
+    """插件自带模型目录 ComfyUI-Noctyra/models/(去水印的扩散模型放这里)。"""
+    return os.path.join(PLUGIN_ROOT, "models")
+
+
+def plugin_fonts_dir():
+    """插件自带字体目录 ComfyUI-Noctyra/fonts/。"""
+    return os.path.join(PLUGIN_ROOT, "fonts")
 
 
 def tensor_to_pil(tensor):
@@ -85,3 +100,58 @@ def apply_opacity(watermark_rgba, opacity):
     r, g, b, a = watermark_rgba.split()
     a = a.point(lambda p: int(p * opacity))
     return Image.merge("RGBA", (r, g, b, a))
+
+
+def apply_watermark_frame(
+    pil_rgba, watermark_pil, *, size_ratio, opacity, position,
+    margin_x, margin_y, fs_angle=-30, fs_density=1.0,
+):
+    """在单帧上贴水印（图片/视频节点共用）。
+
+    pil_rgba: 已转 RGBA 的底图；watermark_pil: 原始 RGBA 水印(未缩放未调透明度)。
+    按 size_ratio 等比缩放、按 opacity 调透明度后，依 position 贴到角落/居中/全屏。
+    返回 RGB 模式 PIL 图（就地修改传入的 pil_rgba）。
+    """
+    import logging
+    logger = logging.getLogger("noctyra")
+
+    img_width, img_height = pil_rgba.size
+    base_size = min(img_width, img_height)
+    target_size = int(base_size * size_ratio)
+    wm_w, wm_h = watermark_pil.size
+    ratio = min(target_size / wm_w, target_size / wm_h)
+    resized = watermark_pil.resize(
+        (max(1, int(wm_w * ratio)), max(1, int(wm_h * ratio))), Image.Resampling.LANCZOS
+    )
+    resized = apply_opacity(resized, opacity)
+    wm_w, wm_h = resized.size
+
+    if position == "全屏":
+        try:
+            rot_img = resized.rotate(fs_angle, expand=True, resample=Image.Resampling.BICUBIC)
+            r_w, r_h = rot_img.size
+            sx = max(1, int((r_w + margin_x) / fs_density))
+            sy = max(1, int((r_h + margin_y) / fs_density))
+            offset = sx // 2
+            row_idx = 0
+            for y in range(-r_h, img_height, sy):
+                start_x = -r_w + (offset if (row_idx % 2) else 0)
+                for x in range(start_x, img_width, sx):
+                    pil_rgba.paste(rot_img, (x, y), rot_img)
+                row_idx += 1
+        except Exception as e:
+            logger.error(f"全屏水印处理失败: {e}")
+    else:
+        x_pos = (
+            margin_x if "左" in position
+            else (img_width - wm_w - margin_x if "右" in position else (img_width - wm_w) // 2)
+        )
+        y_pos = (
+            margin_y if "上" in position
+            else (img_height - wm_h - margin_y if "下" in position else (img_height - wm_h) // 2)
+        )
+        x_pos = max(0, min(x_pos, img_width - 1))
+        y_pos = max(0, min(y_pos, img_height - 1))
+        pil_rgba.paste(resized, (x_pos, y_pos), resized)
+
+    return pil_rgba.convert("RGB")
