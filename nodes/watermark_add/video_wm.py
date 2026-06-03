@@ -29,6 +29,8 @@ from .._utils import (
     pil_to_tensor,
     prepare_watermark_rgba,
     apply_watermark_frame,
+    resolve_frame_range,
+    video_fade_opacity,
 )
 
 logger = logging.getLogger("noctyra")
@@ -41,25 +43,32 @@ class AddVideoWatermark:
     水印只在 [起始帧, 结束帧] 区间显示，可在区间两端做透明度渐变。
     """
 
+    DESCRIPTION = (
+        "给视频(帧序列)在九宫格位置叠加水印，位置/大小/不透明度同图片版。\n"
+        "另支持只在 [起始帧, 结束帧] 区间显示，并可在两端做淡入淡出。"
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "图像": ("IMAGE",),
-                "水印大小比例": ("FLOAT", {"default": 0.25, "min": 0.01, "max": 2.0, "step": 0.01}),
-                "不透明度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "位置": (["左上", "中上", "右上", "左中", "居中", "右中", "左下", "中下", "右下"], {"default": "右下"}),
-                "水平边距": ("INT", {"default": 30, "min": 0, "max": 4096}),
-                "垂直边距": ("INT", {"default": 30, "min": 0, "max": 4096}),
-                "起始帧": ("INT", {"default": 0, "min": 0, "max": 1000000}),
-                "结束帧": ("INT", {"default": -1, "min": -1, "max": 1000000}),
-                "淡入帧数": ("INT", {"default": 0, "min": 0, "max": 100000}),
-                "淡出帧数": ("INT", {"default": 0, "min": 0, "max": 100000}),
-                "反转遮罩": ("BOOLEAN", {"default": False}),
+                "图像": ("IMAGE", {"tooltip": "视频帧序列(批量 IMAGE)"}),
+                "水印大小比例": ("FLOAT", {"default": 0.25, "min": 0.01, "max": 2.0, "step": 0.01,
+                    "tooltip": "水印宽度相对帧宽度的比例"}),
+                "不透明度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "水印不透明度(淡入淡出会在此基础上缩放)"}),
+                "位置": (["左上", "中上", "右上", "左中", "居中", "右中", "左下", "中下", "右下"], {"default": "右下",
+                    "tooltip": "水印在画面的九宫格位置"}),
+                "水平边距": ("INT", {"default": 30, "min": 0, "max": 4096, "tooltip": "距左/右边缘的像素间距"}),
+                "垂直边距": ("INT", {"default": 30, "min": 0, "max": 4096, "tooltip": "距上/下边缘的像素间距"}),
+                "起始帧": ("INT", {"default": 0, "min": 0, "max": 1000000, "tooltip": "从第几帧开始显示水印(0=第一帧)"}),
+                "结束帧": ("INT", {"default": -1, "min": -1, "max": 1000000, "tooltip": "到第几帧停止显示，-1=直到最后一帧"}),
+                "淡入帧数": ("INT", {"default": 0, "min": 0, "max": 100000, "tooltip": "起始处渐显所用帧数，0=不淡入"}),
+                "淡出帧数": ("INT", {"default": 0, "min": 0, "max": 100000, "tooltip": "结束处渐隐所用帧数，0=不淡出"}),
+                "反转遮罩": ("BOOLEAN", {"default": False, "tooltip": "把水印遮罩黑白反转"}),
             },
             "optional": {
-                "水印图像": ("IMAGE",),
-                "水印遮罩": ("MASK",),
+                "水印图像": ("IMAGE", {"tooltip": "作为水印的图(留空则原样输出)"}),
+                "水印遮罩": ("MASK", {"tooltip": "水印 alpha/形状，使背景透明"}),
             },
         }
 
@@ -77,28 +86,12 @@ class AddVideoWatermark:
         if 图像 is None or len(图像) == 0:
             return (torch.zeros((0, 1, 1, 3)),)
 
-        n = len(图像)
-        start = max(0, 起始帧)
-        end = (n - 1) if 结束帧 < 0 else min(结束帧, n - 1)
-
+        start, end = resolve_frame_range(len(图像), 起始帧, 结束帧)
         watermark_pil = prepare_watermark_rgba(水印图像, 水印遮罩, 反转遮罩)
 
         out = []
         for i, img_tensor in enumerate(图像):
-            if i < start or i > end:
-                # 区间外：原帧不动
-                out.append(img_tensor.unsqueeze(0) if img_tensor.dim() == 3 else img_tensor)
-                continue
-
-            # 淡入淡出系数(取两者较小)
-            factor = 1.0
-            if 淡入帧数 > 0:
-                factor = min(factor, (i - start + 1) / 淡入帧数)
-            if 淡出帧数 > 0:
-                factor = min(factor, (end - i + 1) / 淡出帧数)
-            factor = max(0.0, min(1.0, factor))
-            opacity = 不透明度 * factor
-
+            opacity = video_fade_opacity(i, start, end, 淡入帧数, 淡出帧数, 不透明度)
             if opacity <= 0.0:
                 out.append(img_tensor.unsqueeze(0) if img_tensor.dim() == 3 else img_tensor)
                 continue
@@ -119,5 +112,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "AddVideoWatermark": "给视频添加水印（帧区间+淡入淡出）",
+    "AddVideoWatermark": "视频添加水印（位置）",
 }

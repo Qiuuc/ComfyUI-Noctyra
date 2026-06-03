@@ -122,6 +122,8 @@ class EasyAIAspectRatioSelector:
     用于选择图片宽高比，Auto 返回 None
     """
 
+    DESCRIPTION = "选择出图宽高比，输出字符串接到生成/编辑节点的 aspect_ratio 输入。Auto=不指定，由模型决定。"
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -135,7 +137,7 @@ class EasyAIAspectRatioSelector:
                     "2:3",
                     "16:9",
                     "9:16",
-                ],),
+                ], {"tooltip": "出图宽高比。Auto=不指定，让模型自行决定"}),
             }
         }
 
@@ -155,11 +157,13 @@ class EasyAIAspectRatioSelector:
 class EasyAIResolutionSelector:
     """EasyAI 分辨率选择器"""
 
+    DESCRIPTION = "选择出图分辨率档位(1K/2K/4K)，输出字符串接到生成/编辑节点的 resolution 输入。"
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "resolution": (["1K", "2K", "4K"],),
+                "resolution": (["1K", "2K", "4K"], {"tooltip": "出图分辨率档位，越高越清晰也越慢/越贵"}),
             }
         }
 
@@ -176,6 +180,8 @@ class EasyAIResolutionSelector:
 class EasyAIModelSelector:
     """EasyAI 模型选择器"""
 
+    DESCRIPTION = "选择 EasyAI 出图模型，输出字符串接到生成/编辑节点的 model 输入。"
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -184,7 +190,7 @@ class EasyAIModelSelector:
                     "即梦V4.0图像生成及编辑",
                     "Nano Banana 2",
                     "即梦 图片 4.0",
-                ],),
+                ], {"tooltip": "EasyAI 服务端可用的出图模型名称"}),
             }
         }
 
@@ -204,13 +210,17 @@ class AIConfig:
     用于配置 API 的 base_url 和 token
     """
 
+    DESCRIPTION = "配置 EasyAI API 的地址、令牌与超时，输出 CONFIG 接到生成/编辑节点。"
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "base_url": ("STRING", {"default": "http://127.0.0.1:3001"}),
-                "token": ("STRING", {"default": ""}),
-                "timeout": ("INT", {"default": 120, "min": 10, "max": 1800, "step": 10}),
+                "base_url": ("STRING", {"default": "http://127.0.0.1:3001",
+                    "tooltip": "EasyAI 服务地址。会自动补全 /v1，填到域名/端口即可"}),
+                "token": ("STRING", {"default": "", "tooltip": "API 访问令牌(Bearer)，本地无鉴权服务可留空"}),
+                "timeout": ("INT", {"default": 120, "min": 10, "max": 1800, "step": 10,
+                    "tooltip": "单次请求超时秒数。出大图/慢模型时调大"}),
             }
         }
 
@@ -233,18 +243,20 @@ class AIConfig:
 class AIImageGenerator:
     """AI 绘图节点 - 51EasyAI API"""
 
+    DESCRIPTION = "调用 EasyAI API 做文生图：连入 配置 + 模型 + 提示词，返回生成的图片。"
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "config": ("CONFIG",),
-                "prompt": ("STRING", {"multiline": True, "default": "a beautiful cat"}),
-                "model": ("STRING", {"forceInput": True}),
+                "config": ("CONFIG", {"tooltip": "来自『EasyAI API Config』节点的配置"}),
+                "prompt": ("STRING", {"multiline": True, "default": "a beautiful cat", "tooltip": "文生图提示词"}),
+                "model": ("STRING", {"forceInput": True, "tooltip": "出图模型，接『EasyAI Model Selector』"}),
             },
             "optional": {
-                "size": ("STRING", {"forceInput": True}),
-                "aspect_ratio": ("STRING", {"forceInput": True}),
-                "resolution": ("STRING", {"forceInput": True}),
+                "size": ("STRING", {"forceInput": True, "tooltip": "精确尺寸如 1024x1024(可选，留空用宽高比/分辨率)"}),
+                "aspect_ratio": ("STRING", {"forceInput": True, "tooltip": "宽高比，接『Aspect Ratio Selector』(可选)"}),
+                "resolution": ("STRING", {"forceInput": True, "tooltip": "分辨率档位，接『Resolution Selector』(可选)"}),
             }
         }
 
@@ -289,25 +301,28 @@ class EasyAIImageEditor:
     支持基于参考图片的编辑和重绘
     """
 
+    DESCRIPTION = "调用 EasyAI API 做图生图/编辑：连入参考图 + 提示词，按描述编辑或重绘(参考图最多 16 张)。"
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "config": ("CONFIG",),
-                "model": ("STRING", {"forceInput": True}),
-                "image": ("IMAGE",),
-                "prompt": ("STRING", {"multiline": True, "default": "edit the image"}),
+                "config": ("CONFIG", {"tooltip": "来自『EasyAI API Config』节点的配置"}),
+                "model": ("STRING", {"forceInput": True, "tooltip": "出图模型，接『EasyAI Model Selector』"}),
+                "image": ("IMAGE", {"tooltip": "参考/待编辑图片(可批量，最多上传 16 张)"}),
+                "prompt": ("STRING", {"multiline": True, "default": "edit the image", "tooltip": "编辑指令/重绘提示词"}),
             },
             "optional": {
-                "size": ("STRING", {"forceInput": True}),
-                "aspect_ratio": ("STRING", {"forceInput": True}),
-                "resolution": ("STRING", {"forceInput": True}),
+                "size": ("STRING", {"forceInput": True, "tooltip": "精确尺寸如 1024x1024(可选)"}),
+                "aspect_ratio": ("STRING", {"forceInput": True, "tooltip": "宽高比，接『Aspect Ratio Selector』(可选)"}),
+                "resolution": ("STRING", {"forceInput": True, "tooltip": "分辨率档位，接『Resolution Selector』(可选)"}),
                 "seed": ("INT", {
                     "default": -1,
                     "min": -1,
                     "max": 2147483647,
                     "step": 1,
                     "forceInput": True,
+                    "tooltip": "随机种子，-1=随机；固定可复现同一结果",
                 }),
             }
         }

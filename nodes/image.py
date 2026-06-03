@@ -35,15 +35,21 @@ class SaveImageNoMetadata:
         self.type = "output"
         self.prefix_append = ""
 
+    DESCRIPTION = (
+        "保存图片到输出目录，且不写入任何元数据(无 PNG text/参数/工作流)，"
+        "适合发布前清掉 AI 生成痕迹与隐私信息。"
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "images": ("IMAGE",),
-                "filename_prefix": ("STRING", {"default": "Clean_Image"}),
+                "images": ("IMAGE", {"tooltip": "要保存的图片(可批量)"}),
+                "filename_prefix": ("STRING", {"default": "Clean_Image", "tooltip": "输出文件名前缀，会自动追加序号"}),
             },
             "optional": {
-                "compress_level": ("INT", {"default": 4, "min": 0, "max": 9, "step": 1}),
+                "compress_level": ("INT", {"default": 4, "min": 0, "max": 9, "step": 1,
+                    "tooltip": "PNG 压缩级别 0~9，越大文件越小越慢(0=不压缩最快)"}),
             },
         }
 

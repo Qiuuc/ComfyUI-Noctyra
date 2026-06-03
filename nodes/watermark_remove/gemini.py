@@ -39,6 +39,8 @@ import cv2
 import numpy as np
 import torch
 
+from .._utils import tensor_to_rgb_uint8, rgb_uint8_to_tensor
+
 logger = logging.getLogger("noctyra")
 
 _ASSET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
@@ -219,17 +221,33 @@ class RemoveGeminiWatermark:
     不改动该帧（避免反相伪影）。可选对残留边缘做轻度 inpaint。
     """
 
+    DESCRIPTION = (
+        "去除 Gemini/Imagen 图右下角的星标水印。先多尺度匹配定位星标，再二选一去除：\n"
+        "· 直接修复(inpaint)：把星标区域整块抹掉重画，对低对比/纯色背景更稳(推荐)。\n"
+        "· 反向alpha还原：用内嵌模板反解还原底层像素，检测准时质量最高、但难例易留残影。"
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "图像": ("IMAGE",),
-                "检测阈值": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "模板尺寸": (["自动", "小(48)", "大(96)"], {"default": "自动"}),
-                "残留修复": ("BOOLEAN", {"default": True}),
-                "修复方法": (["Navier-Stokes", "Telea", "Gaussian"], {"default": "Navier-Stokes"}),
-                "修复半径": ("INT", {"default": 10, "min": 1, "max": 64}),
-                "修复强度": ("FLOAT", {"default": 0.85, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "图像": ("IMAGE", {"tooltip": "含 Gemini 右下角彩色星标的图像"}),
+                "去除方式": (["直接修复(inpaint)", "反向alpha还原"], {"default": "直接修复(inpaint)",
+                    "tooltip": "直接修复=抹掉星标区域重画(稳)；反向还原=反解还原像素(检测准时质量高)"}),
+                "检测阈值": ("FLOAT", {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.01,
+                    "tooltip": "星标匹配置信度低于此值则判定未检出、原样返回。调低=更激进(可能误检)"}),
+                "模板尺寸": (["自动", "小(48)", "大(96)"], {"default": "自动",
+                    "tooltip": "反向还原用的模板基准尺寸。自动=按多尺度匹配结果(一般保持自动)"}),
+                "修复区域扩大": ("INT", {"default": 50, "min": 0, "max": 512,
+                    "tooltip": "【直接修复】检测框向外扩多少像素再抹除。星标没盖全就调大(如 70~90)"}),
+                "修复方法": (["Navier-Stokes", "Telea", "Gaussian"], {"default": "Navier-Stokes",
+                    "tooltip": "inpaint 算法。NS/Telea 为 OpenCV 修复(直接修复模式只用这两种)"}),
+                "修复半径": ("INT", {"default": 10, "min": 1, "max": 64,
+                    "tooltip": "inpaint 参考的邻域半径，越大越平滑但越慢"}),
+                "残留修复": ("BOOLEAN", {"default": True,
+                    "tooltip": "【反向还原】对反解后星标边缘的残留再做一遍轻度修复"}),
+                "修复强度": ("FLOAT", {"default": 0.85, "min": 0.0, "max": 1.0, "step": 0.01,
+                    "tooltip": "【反向还原】残留修复的混合强度，0=不修、1=全用修复结果"}),
             },
         }
 
@@ -238,18 +256,17 @@ class RemoveGeminiWatermark:
     FUNCTION = "remove"
     CATEGORY = "Noctyra/水印去除"
 
-    def remove(self, 图像, 检测阈值, 模板尺寸, 残留修复, 修复方法, 修复半径, 修复强度):
+    def remove(self, 图像, 去除方式="直接修复(inpaint)", 检测阈值=0.35, 模板尺寸="自动",
+               修复区域扩大=50, 修复方法="Navier-Stokes", 修复半径=10,
+               残留修复=True, 修复强度=0.85):
         engine = _GeminiEngine.get()
         _method = {"Navier-Stokes": "ns", "Telea": "telea", "Gaussian": "gaussian"}[修复方法]
+        _flag = cv2.INPAINT_TELEA if 修复方法 == "Telea" else cv2.INPAINT_NS
+        use_inpaint = 去除方式.startswith("直接")
         out_images, out_masks, infos = [], [], []
 
         for img_tensor in 图像:
-            rgb = np.clip(img_tensor.cpu().numpy() * 255.0, 0, 255).astype(np.uint8)
-            if rgb.ndim == 2:
-                rgb = np.stack([rgb] * 3, axis=-1)
-            if rgb.shape[-1] == 4:
-                rgb = rgb[..., :3]
-            rgb = np.ascontiguousarray(rgb)
+            rgb = tensor_to_rgb_uint8(img_tensor)
             h, w = rgb.shape[:2]
             mask = np.zeros((h, w), dtype=np.float32)
 
@@ -259,20 +276,30 @@ class RemoveGeminiWatermark:
                     rw = rh = 48
                 elif 模板尺寸 == "大(96)":
                     rw = rh = 96
-                alpha_map = engine.interp_alpha(rw)
-                engine.reverse_alpha_blend(rgb, alpha_map, (rx, ry))
-                mask[ry:min(h, ry + rh), rx:min(w, rx + rw)] = 1.0
 
-                if 残留修复:
-                    engine.inpaint_residual(
-                        rgb, (rx, ry, rw, rh),
-                        strength=修复强度, method=_method, radius=修复半径,
-                    )
-                infos.append(f"检出 conf={conf:.3f} 区域=({rx},{ry},{rw}x{rh})")
+                if use_inpaint:
+                    # 直接修复：以检测中心向外扩大成方框，inpaint 抹除(对纯色背景/难例更稳)
+                    cx, cy = rx + rw // 2, ry + rh // 2
+                    half = max(rw, rh) // 2 + 修复区域扩大
+                    x0, y0 = max(0, cx - half), max(0, cy - half)
+                    x1, y1 = min(w, cx + half), min(h, cy + half)
+                    m8 = np.zeros((h, w), dtype=np.uint8)
+                    m8[y0:y1, x0:x1] = 255
+                    rgb = cv2.inpaint(rgb, m8, 修复半径, _flag)
+                    mask[y0:y1, x0:x1] = 1.0
+                    infos.append(f"修复 conf={conf:.3f} 框=({x0},{y0},{x1 - x0}x{y1 - y0})")
+                else:
+                    # 反向 alpha 还原(检测准时质量更高，但难例可能有残影)
+                    engine.reverse_alpha_blend(rgb, engine.interp_alpha(rw), (rx, ry))
+                    mask[ry:min(h, ry + rh), rx:min(w, rx + rw)] = 1.0
+                    if 残留修复:
+                        engine.inpaint_residual(rgb, (rx, ry, rw, rh),
+                                                strength=修复强度, method=_method, radius=修复半径)
+                    infos.append(f"还原 conf={conf:.3f} 区域=({rx},{ry},{rw}x{rh})")
             else:
                 infos.append(f"未检出 conf={conf:.3f}，原样返回")
 
-            out_images.append(torch.from_numpy(rgb.astype(np.float32) / 255.0).unsqueeze(0))
+            out_images.append(rgb_uint8_to_tensor(rgb))
             out_masks.append(torch.from_numpy(mask))
 
         return (torch.cat(out_images, dim=0), torch.stack(out_masks, dim=0), "; ".join(infos))
@@ -283,5 +310,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "RemoveGeminiWatermark": "去除Gemini星标水印（反向alpha还原）",
+    "RemoveGeminiWatermark": "去除Gemini星标水印",
 }

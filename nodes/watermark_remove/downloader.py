@@ -167,20 +167,28 @@ class InvisibleWatermarkModelDownloader:
     大小，确认后再取消勾选执行下载。
     """
 
+    DESCRIPTION = (
+        "把『去除隐形水印』节点所需的扩散模型下到本插件 models/ 目录。\n"
+        "建议先勾『仅检查不下载』看各源体积，确认后再取消勾选执行。国内推荐 ModelScope 源 + 『不走代理』。"
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "管线": (["default (SDXL)", "ctrlregen", "全部"], {"default": "default (SDXL)"}),
-                "下载源": (["HuggingFace", "HF镜像(hf-mirror)", "ModelScope"], {"default": "ModelScope"}),
-                "不走代理": ("BOOLEAN", {"default": True}),
-                "仅检查不下载": ("BOOLEAN", {"default": True}),
-                "精度": (["fp16优先(省空间)", "完整精度"], {"default": "fp16优先(省空间)"}),
+                "管线": (["default (SDXL)", "ctrlregen", "全部"], {"default": "default (SDXL)",
+                    "tooltip": "下哪套模型，需与『去除隐形水印』节点的管线一致。default≈7GB；ctrlregen 另需若干模型；全部=都下"}),
+                "下载源": (["HuggingFace", "HF镜像(hf-mirror)", "ModelScope"], {"default": "ModelScope",
+                    "tooltip": "下载站点。国内首选 ModelScope 或 HF镜像；HuggingFace 官方需能直连"}),
+                "不走代理": ("BOOLEAN", {"default": True, "tooltip": "下载时绕过系统/环境代理，省流量(国内大文件建议开)"}),
+                "仅检查不下载": ("BOOLEAN", {"default": True, "tooltip": "只列出将下载的文件与总体积，不实际下载。确认无误后关掉再运行"}),
+                "精度": (["fp16优先(省空间)", "完整精度"], {"default": "fp16优先(省空间)",
+                    "tooltip": "fp16优先=只取半精度权重(体积约一半，去水印够用)；完整精度=连 fp32 一起下"}),
             },
             "optional": {
-                "hf_token": ("STRING", {"default": ""}),
-                "目标目录": ("STRING", {"default": ""}),
-                "自定义SDXL模型": ("STRING", {"default": ""}),
+                "hf_token": ("STRING", {"default": "", "tooltip": "HuggingFace 访问令牌，仅下载 gated/私有库时才需要"}),
+                "目标目录": ("STRING", {"default": "", "tooltip": "自定义保存目录，留空=插件 models/ 目录(推荐)"}),
+                "自定义SDXL模型": ("STRING", {"default": "", "tooltip": "用别的 SDXL 仓库替换默认底模(填 repo_id)，留空=用默认。仅含 SDXL 的管线生效"}),
             },
         }
 
@@ -246,11 +254,11 @@ class InvisibleWatermarkModelDownloader:
             dest = os.path.join(dest_root, rel.replace("/", os.sep))
             # 防目录穿越：确保落点仍在 dest_root 内
             if os.path.commonpath([root_abs, os.path.abspath(dest)]) != root_abs:
-                logger.warning(f"[Noctyra] 跳过异常路径(疑似穿越): {rel}")
+                logger.warning(f"跳过异常路径(疑似穿越): {rel}")
                 continue
             if os.path.exists(dest) and os.path.getsize(dest) == name_size[rel]:
                 continue
-            logger.info(f"[Noctyra] ModelScope 下载 {ms_id} :: {rel} ({i}/{len(keep)})")
+            logger.info(f"ModelScope 下载 {ms_id} :: {rel} ({i}/{len(keep)})")
             _ms_download_file(ms_id, rel, dest, opener)
         return size, f"[OK] {repo}  [MS:{ms_id}]  {_human(size)}\n    -> {dest_root}"
 
@@ -308,12 +316,8 @@ class InvisibleWatermarkModelDownloader:
             lines.append("确认后取消勾选『仅检查不下载』再次执行即开始下载。")
 
         report = "\n".join(lines)
-        try:
-            print(f"[Noctyra 模型下载]\n{report}")
-        except Exception:
-            import sys
-            enc = sys.stdout.encoding or "utf-8"
-            print(("[Noctyra 模型下载]\n" + report).encode(enc, "replace").decode(enc))
+        from .._utils import safe_print
+        safe_print("[Noctyra] 模型下载\n" + report)
         return (report,)
 
 

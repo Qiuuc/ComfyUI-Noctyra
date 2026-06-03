@@ -32,6 +32,8 @@ import cv2
 import numpy as np
 import torch
 
+from .._utils import tensor_to_rgb_uint8, rgb_uint8_to_tensor
+
 logger = logging.getLogger("noctyra")
 
 # 几何（相对图像宽度）：豆包水印随宽度缩放、锚定右下角
@@ -93,15 +95,22 @@ class RemoveDoubaoWatermark:
     几何定位右下角文字条 → 提取浅色字形掩膜 → inpaint 修复。
     """
 
+    DESCRIPTION = (
+        "专门去除豆包(字节)生图右下角的『豆包AI生成』浅灰文字标识：自动几何定位右下角"
+        "→ 提取浅色字形 → inpaint 修复，无需手动框选。\n"
+        "检测到覆盖率过高(疑似密集文档文字)时会自动跳过以免抹糊，可用『强制修复』覆盖。"
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "图像": ("IMAGE",),
-                "修复方法": (["Telea", "Navier-Stokes"], {"default": "Telea"}),
-                "修复半径": ("INT", {"default": 6, "min": 1, "max": 64}),
-                "遮罩扩张": ("INT", {"default": 3, "min": 0, "max": 64}),
-                "强制修复": ("BOOLEAN", {"default": False}),
+                "图像": ("IMAGE", {"tooltip": "豆包生图(右下角带『豆包AI生成』标识)"}),
+                "修复方法": (["Telea", "Navier-Stokes"], {"default": "Telea", "tooltip": "cv2 inpaint 算法，二者效果接近"}),
+                "修复半径": ("INT", {"default": 6, "min": 1, "max": 64, "tooltip": "参考邻域半径，越大越平滑越慢"}),
+                "遮罩扩张": ("INT", {"default": 3, "min": 0, "max": 64, "tooltip": "字形掩膜向外扩几像素，确保盖住抗锯齿边缘"}),
+                "强制修复": ("BOOLEAN", {"default": False,
+                    "tooltip": "无视『检出覆盖率太低/太高』的安全判定，强行修复定位框。误判没去掉时再开"}),
             },
         }
 
@@ -116,12 +125,7 @@ class RemoveDoubaoWatermark:
         out_images, out_masks, infos = [], [], []
 
         for img_tensor in 图像:
-            rgb = np.clip(img_tensor.cpu().numpy() * 255.0, 0, 255).astype(np.uint8)
-            if rgb.ndim == 2:
-                rgb = np.stack([rgb] * 3, axis=-1)
-            if rgb.shape[-1] == 4:
-                rgb = rgb[..., :3]
-            rgb = np.ascontiguousarray(rgb)
+            rgb = tensor_to_rgb_uint8(img_tensor)
             h, w = rgb.shape[:2]
 
             box = engine.locate(h, w)
@@ -144,7 +148,7 @@ class RemoveDoubaoWatermark:
                 mask = m
                 infos.append(f"已修复 cov={cov:.3f} conf={conf:.3f} 区域={box}")
 
-            out_images.append(torch.from_numpy(rgb.astype(np.float32) / 255.0).unsqueeze(0))
+            out_images.append(rgb_uint8_to_tensor(rgb))
             out_masks.append(torch.from_numpy(mask.astype(np.float32) / 255.0))
 
         return (torch.cat(out_images, dim=0), torch.stack(out_masks, dim=0), "; ".join(infos))

@@ -123,20 +123,27 @@ class CreateTextWatermark:
     一起接到加水印节点的『水印图像 / 水印遮罩』即可。
     """
 
+    DESCRIPTION = (
+        "把一段文字渲染成透明文字水印：输出 图像(文字颜色) + 遮罩(文字形状 alpha)，"
+        "自动裁到文字大小。\n"
+        "两路一起接到『图片/视频添加水印』节点的 水印图像 / 水印遮罩 即可作为文字水印叠加。"
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "文本": ("STRING", {"default": "© Noctyra", "multiline": True}),
-                "字体": (_available_fonts(),),
-                "字号": ("INT", {"default": 72, "min": 4, "max": 1024}),
-                "颜色": ("STRING", {"default": "#FFFFFF"}),
-                "不透明度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "描边宽度": ("INT", {"default": 0, "min": 0, "max": 64}),
-                "描边颜色": ("STRING", {"default": "#000000"}),
-                "对齐": (["左", "中", "右"], {"default": "左"}),
-                "行间距": ("INT", {"default": 8, "min": 0, "max": 256}),
-                "边距": ("INT", {"default": 16, "min": 0, "max": 512}),
+                "文本": ("STRING", {"default": "© Noctyra", "multiline": True, "tooltip": "水印文字，支持多行"}),
+                "字体": (_available_fonts(), {"tooltip": "字体(插件 fonts/、models/fonts、系统字体均会扫描)。已内置思源黑体支持中文"}),
+                "字号": ("INT", {"default": 72, "min": 4, "max": 1024, "tooltip": "字号(像素)"}),
+                "颜色": ("STRING", {"default": "#FFFFFF", "tooltip": "文字颜色，十六进制如 #FFFFFF 或颜色名 white"}),
+                "不透明度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01,
+                    "tooltip": "文字整体不透明度(写进遮罩，叠加时再乘一次)"}),
+                "描边宽度": ("INT", {"default": 0, "min": 0, "max": 64, "tooltip": "文字描边粗细，0=无描边。设>0 才显示『描边颜色』"}),
+                "描边颜色": ("STRING", {"default": "#000000", "tooltip": "描边颜色(描边宽度>0 时生效)"}),
+                "对齐": (["左", "中", "右"], {"default": "左", "tooltip": "多行文字的水平对齐"}),
+                "行间距": ("INT", {"default": 8, "min": 0, "max": 256, "tooltip": "多行之间的额外像素间距"}),
+                "边距": ("INT", {"default": 16, "min": 0, "max": 512, "tooltip": "文字四周留白(避免描边/斜体被裁切)"}),
             },
         }
 
@@ -183,5 +190,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "CreateTextWatermark": "生成文字水印（图像+遮罩）",
+    "CreateTextWatermark": "文字水印生成",
 }

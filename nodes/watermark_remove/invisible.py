@@ -25,7 +25,7 @@
 
 - default  : SDXL 低强度 img2img 重生成，打乱 SynthID/StableSignature/TreeRing。
 - ctrlregen: CtrlRegen 受控全量重生成(空间ControlNet+语义IP-Adapter)，更彻底。
-可选 文字保护 / 人脸保护 / 胶片颗粒(humanize)。模型全部读 models/Noctyra 下
+可选 文字保护 / 人脸保护 / 胶片颗粒(humanize)。模型全部读插件自带 models/ 下
 用『隐形水印模型下载器』下好的本地目录(离线)。
 """
 import logging
@@ -128,20 +128,29 @@ class RemoveInvisibleWatermark:
     最保真；ctrlregen 受控全量重生成、更彻底。可选文字/人脸保护与胶片颗粒。
     """
 
+    DESCRIPTION = (
+        "去除 SynthID / StableSignature 等『隐形水印』：用扩散模型低强度重生成像素打乱不可见水印。\n"
+        "模型需先用『隐形水印模型下载器』下到插件 models/ 目录。需要 GPU。"
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "图像": ("IMAGE",),
-                "管线": (["default (SDXL)", "ctrlregen"], {"default": "default (SDXL)"}),
-                "重绘强度": ("FLOAT", {"default": 0.05, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "采样步数": ("INT", {"default": 50, "min": 1, "max": 150}),
-                "seed": ("INT", {"default": 0, "min": -1, "max": 2**31 - 1}),
-                "设备": (["自动", "cuda", "cpu"], {"default": "自动"}),
-                "文字保护": ("BOOLEAN", {"default": False}),
-                "人脸保护": ("BOOLEAN", {"default": False}),
-                "胶片颗粒": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 10.0, "step": 0.5}),
-                "最大边长": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 64}),
+                "图像": ("IMAGE", {"tooltip": "疑似含 SynthID 等隐形水印的图像"}),
+                "管线": (["default (SDXL)", "ctrlregen"], {"default": "default (SDXL)",
+                    "tooltip": "default=SDXL 轻量 img2img(最保真,1个模型)；ctrlregen=受控全量重生成(更彻底,需4个模型)"}),
+                "重绘强度": ("FLOAT", {"default": 0.05, "min": 0.0, "max": 1.0, "step": 0.01,
+                    "tooltip": "img2img 去噪强度。0.05=只动一点点(画面几乎不变即可破坏水印);调大改动越多越可能走样"}),
+                "采样步数": ("INT", {"default": 50, "min": 1, "max": 150, "tooltip": "去噪步数，越多越精细越慢"}),
+                "seed": ("INT", {"default": 0, "min": -1, "max": 2**31 - 1, "tooltip": "随机种子，-1=每次随机"}),
+                "设备": (["自动", "cuda", "cpu"], {"default": "自动", "tooltip": "推理设备。CPU 极慢，建议 cuda"}),
+                "文字保护": ("BOOLEAN", {"default": False, "tooltip": "检测文字区并用差分扩散保护，避免文字/CJK 被改坏(首次用下小模型)"}),
+                "人脸保护": ("BOOLEAN", {"default": False, "tooltip": "提取人脸、重生成后再贴回，保人脸不变(用 YOLO，首次下小模型)"}),
+                "胶片颗粒": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 10.0, "step": 0.5,
+                    "tooltip": "可选的胶片颗粒/拟真后期强度，0=关。典型 2~6"}),
+                "最大边长": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 64,
+                    "tooltip": "处理前把长边缩到此像素以省显存，0=原生分辨率(质量最好)。大图 OOM 时才设"}),
             },
         }
 

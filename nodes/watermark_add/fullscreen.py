@@ -30,6 +30,8 @@ from .._utils import (
     pil_to_tensor,
     prepare_watermark_rgba,
     apply_watermark_frame,
+    resolve_frame_range,
+    video_fade_opacity,
 )
 
 logger = logging.getLogger("noctyra")
@@ -52,22 +54,28 @@ class AddFullscreenWatermark:
     把水印旋转后斜向平铺铺满整图，适合防盗用的满版水印。
     """
 
+    DESCRIPTION = (
+        "把水印旋转后斜向平铺铺满整图，做防盗用的满版水印。处理单帧或多帧。\n"
+        "与『网格水印』区别：全屏是规则斜向密铺；网格可分别控制行列密度且带随机抖动。"
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "图像": ("IMAGE",),
-                "水印大小比例": ("FLOAT", {"default": 0.15, "min": 0.01, "max": 2.0, "step": 0.01}),
-                "不透明度": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "旋转角度": ("INT", {"default": -30, "min": -360, "max": 360}),
-                "水平间距": ("INT", {"default": 10, "min": 0, "max": 4096}),
-                "垂直间距": ("INT", {"default": 10, "min": 0, "max": 4096}),
-                "密度": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 5.0, "step": 0.1}),
-                "反转遮罩": ("BOOLEAN", {"default": False}),
+                "图像": ("IMAGE", {"tooltip": "被加水印的底图"}),
+                "水印大小比例": ("FLOAT", {"default": 0.15, "min": 0.01, "max": 2.0, "step": 0.01,
+                    "tooltip": "单个水印宽度相对底图宽度的比例。越小铺得越密"}),
+                "不透明度": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "水印不透明度，满版建议偏低(0.3~0.5)"}),
+                "旋转角度": ("INT", {"default": -30, "min": -360, "max": 360, "tooltip": "水印倾斜角度(度)，-30=常见的左下斜向"}),
+                "水平间距": ("INT", {"default": 10, "min": 0, "max": 4096, "tooltip": "平铺时相邻水印的水平间距(像素)"}),
+                "垂直间距": ("INT", {"default": 10, "min": 0, "max": 4096, "tooltip": "平铺时相邻水印的垂直间距(像素)"}),
+                "密度": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 5.0, "step": 0.1, "tooltip": "整体铺设密度倍率，越大越密"}),
+                "反转遮罩": ("BOOLEAN", {"default": False, "tooltip": "把水印遮罩黑白反转"}),
             },
             "optional": {
-                "水印图像": ("IMAGE",),
-                "水印遮罩": ("MASK",),
+                "水印图像": ("IMAGE", {"tooltip": "作为水印的图(留空则原样输出)"}),
+                "水印遮罩": ("MASK", {"tooltip": "水印 alpha/形状，使背景透明"}),
             },
         }
 
@@ -95,26 +103,32 @@ class AddVideoFullscreenWatermark:
     给视频帧序列铺满版水印，支持只在 [起始帧, 结束帧] 区间显示并做淡入淡出。
     """
 
+    DESCRIPTION = (
+        "给视频帧序列铺满版水印，可只在 [起始帧, 结束帧] 区间显示并做淡入淡出。\n"
+        "平铺参数同『图片全屏水印』，多出帧区间与淡入淡出控制。"
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "图像": ("IMAGE",),
-                "水印大小比例": ("FLOAT", {"default": 0.15, "min": 0.01, "max": 2.0, "step": 0.01}),
-                "不透明度": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "旋转角度": ("INT", {"default": -30, "min": -360, "max": 360}),
-                "水平间距": ("INT", {"default": 10, "min": 0, "max": 4096}),
-                "垂直间距": ("INT", {"default": 10, "min": 0, "max": 4096}),
-                "密度": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 5.0, "step": 0.1}),
-                "起始帧": ("INT", {"default": 0, "min": 0, "max": 1000000}),
-                "结束帧": ("INT", {"default": -1, "min": -1, "max": 1000000}),
-                "淡入帧数": ("INT", {"default": 0, "min": 0, "max": 100000}),
-                "淡出帧数": ("INT", {"default": 0, "min": 0, "max": 100000}),
-                "反转遮罩": ("BOOLEAN", {"default": False}),
+                "图像": ("IMAGE", {"tooltip": "视频帧序列(批量 IMAGE)"}),
+                "水印大小比例": ("FLOAT", {"default": 0.15, "min": 0.01, "max": 2.0, "step": 0.01,
+                    "tooltip": "单个水印宽度相对帧宽度的比例"}),
+                "不透明度": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "水印不透明度(淡入淡出会在此基础上缩放)"}),
+                "旋转角度": ("INT", {"default": -30, "min": -360, "max": 360, "tooltip": "水印倾斜角度(度)"}),
+                "水平间距": ("INT", {"default": 10, "min": 0, "max": 4096, "tooltip": "相邻水印水平间距(像素)"}),
+                "垂直间距": ("INT", {"default": 10, "min": 0, "max": 4096, "tooltip": "相邻水印垂直间距(像素)"}),
+                "密度": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 5.0, "step": 0.1, "tooltip": "铺设密度倍率"}),
+                "起始帧": ("INT", {"default": 0, "min": 0, "max": 1000000, "tooltip": "从第几帧开始显示水印(0=第一帧)"}),
+                "结束帧": ("INT", {"default": -1, "min": -1, "max": 1000000, "tooltip": "到第几帧停止显示，-1=直到最后一帧"}),
+                "淡入帧数": ("INT", {"default": 0, "min": 0, "max": 100000, "tooltip": "起始处用多少帧把水印从透明渐显到设定不透明度，0=不淡入"}),
+                "淡出帧数": ("INT", {"default": 0, "min": 0, "max": 100000, "tooltip": "结束处用多少帧把水印渐隐到透明，0=不淡出"}),
+                "反转遮罩": ("BOOLEAN", {"default": False, "tooltip": "把水印遮罩黑白反转"}),
             },
             "optional": {
-                "水印图像": ("IMAGE",),
-                "水印遮罩": ("MASK",),
+                "水印图像": ("IMAGE", {"tooltip": "作为水印的图(留空则原样输出)"}),
+                "水印遮罩": ("MASK", {"tooltip": "水印 alpha/形状，使背景透明"}),
             },
         }
 
@@ -130,22 +144,12 @@ class AddVideoFullscreenWatermark:
         if 图像 is None or len(图像) == 0:
             return (torch.zeros((0, 1, 1, 3)),)
 
-        n = len(图像)
-        start = max(0, 起始帧)
-        end = (n - 1) if 结束帧 < 0 else min(结束帧, n - 1)
+        start, end = resolve_frame_range(len(图像), 起始帧, 结束帧)
         watermark_pil = prepare_watermark_rgba(水印图像, 水印遮罩, 反转遮罩)
 
         out = []
         for i, t in enumerate(图像):
-            if i < start or i > end:
-                out.append(t.unsqueeze(0) if t.dim() == 3 else t)
-                continue
-            factor = 1.0
-            if 淡入帧数 > 0:
-                factor = min(factor, (i - start + 1) / 淡入帧数)
-            if 淡出帧数 > 0:
-                factor = min(factor, (end - i + 1) / 淡出帧数)
-            opacity = 不透明度 * max(0.0, min(1.0, factor))
+            opacity = video_fade_opacity(i, start, end, 淡入帧数, 淡出帧数, 不透明度)
             if opacity <= 0.0:
                 out.append(t.unsqueeze(0) if t.dim() == 3 else t)
                 continue
@@ -159,6 +163,6 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "AddFullscreenWatermark": "全屏水印（图片·平铺）",
-    "AddVideoFullscreenWatermark": "全屏水印（视频·帧区间+淡入淡出）",
+    "AddFullscreenWatermark": "图片添加水印（全屏）",
+    "AddVideoFullscreenWatermark": "视频添加水印（全屏）",
 }

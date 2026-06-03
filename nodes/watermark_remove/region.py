@@ -31,7 +31,10 @@ import cv2
 import numpy as np
 import torch
 
-from .._utils import tensor_to_pil, pil_to_tensor  # noqa: F401  (保持与其它模块一致的依赖入口)
+from .._utils import (
+    tensor_to_rgb_uint8 as _tensor_to_rgb_uint8,
+    rgb_uint8_to_tensor as _rgb_uint8_to_tensor,
+)
 
 logger = logging.getLogger("noctyra")
 
@@ -39,21 +42,6 @@ _INPAINT_FLAGS = {
     "Telea": cv2.INPAINT_TELEA,
     "Navier-Stokes": cv2.INPAINT_NS,
 }
-
-
-def _tensor_to_rgb_uint8(img_tensor):
-    """单张 IMAGE 张量([H,W,C], 0..1) -> RGB uint8 ndarray"""
-    arr = np.clip(img_tensor.cpu().numpy() * 255.0, 0, 255).astype(np.uint8)
-    if arr.ndim == 2:
-        arr = np.stack([arr] * 3, axis=-1)
-    if arr.shape[-1] == 4:
-        arr = arr[..., :3]
-    return arr
-
-
-def _rgb_uint8_to_tensor(arr):
-    """RGB uint8 ndarray -> ComfyUI IMAGE 张量 [1,H,W,C]"""
-    return torch.from_numpy(arr.astype(np.float32) / 255.0).unsqueeze(0)
 
 
 def _rect_from_preset(preset, 角落位置, 角落大小, 条带位置, 条带高度,
@@ -95,28 +83,37 @@ class RemoveVisibleWatermark:
     适用于抹除 AI 生图工具留在角落或底部的可见 logo / 文字水印。
     """
 
+    DESCRIPTION = (
+        "通用可见水印去除：手动框选水印所在区域(角落/条带/自定义矩形/外部遮罩)后做图像修复(inpaint)。\n"
+        "适合抹除任意位置的 logo / 文字水印。坐标按图像比例(0~1)。"
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "图像": ("IMAGE",),
-                "模式": (["角落", "条带", "自定义矩形", "外部遮罩"], {"default": "角落"}),
-                "角落位置": (["右下", "左下", "右上", "左上"], {"default": "右下"}),
-                "角落大小": ("FLOAT", {"default": 0.15, "min": 0.01, "max": 1.0, "step": 0.01}),
-                "条带位置": (["底部", "顶部"], {"default": "底部"}),
-                "条带高度": ("FLOAT", {"default": 0.08, "min": 0.01, "max": 1.0, "step": 0.01}),
-                "自定义X": ("FLOAT", {"default": 0.8, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "自定义Y": ("FLOAT", {"default": 0.85, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "自定义宽": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "自定义高": ("FLOAT", {"default": 0.15, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "后端": (["cv2(快)", "LaMa(高质量)"], {"default": "cv2(快)"}),
-                "修复方法": (["Telea", "Navier-Stokes"], {"default": "Telea"}),
-                "修复半径": ("INT", {"default": 6, "min": 1, "max": 64}),
-                "遮罩扩张": ("INT", {"default": 4, "min": 0, "max": 128}),
-                "边缘羽化": ("INT", {"default": 4, "min": 0, "max": 128}),
+                "图像": ("IMAGE", {"tooltip": "待去水印的图像"}),
+                "模式": (["角落", "条带", "自定义矩形", "外部遮罩"], {"default": "角落",
+                    "tooltip": "区域选取方式：角落=四角之一；条带=顶/底整条；自定义矩形=按XYWH比例；外部遮罩=用连入的MASK"}),
+                "角落位置": (["右下", "左下", "右上", "左上"], {"default": "右下", "tooltip": "【角落模式】水印在哪个角"}),
+                "角落大小": ("FLOAT", {"default": 0.15, "min": 0.01, "max": 1.0, "step": 0.01,
+                    "tooltip": "【角落模式】方块边长占图像短边的比例(0.15=15%)"}),
+                "条带位置": (["底部", "顶部"], {"default": "底部", "tooltip": "【条带模式】整条在顶部还是底部"}),
+                "条带高度": ("FLOAT", {"default": 0.08, "min": 0.01, "max": 1.0, "step": 0.01,
+                    "tooltip": "【条带模式】条带高度占图像高度的比例"}),
+                "自定义X": ("FLOAT", {"default": 0.8, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "【自定义矩形】左上角 X(占宽比例)"}),
+                "自定义Y": ("FLOAT", {"default": 0.85, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "【自定义矩形】左上角 Y(占高比例)"}),
+                "自定义宽": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "【自定义矩形】宽(占宽比例)"}),
+                "自定义高": ("FLOAT", {"default": 0.15, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "【自定义矩形】高(占高比例)"}),
+                "后端": (["cv2(快)", "LaMa(高质量)"], {"default": "cv2(快)",
+                    "tooltip": "修复后端。cv2=即时无需模型；LaMa=神经修复质量更好(首次用自动下~200MB模型)"}),
+                "修复方法": (["Telea", "Navier-Stokes"], {"default": "Telea", "tooltip": "【cv2后端】inpaint 算法"}),
+                "修复半径": ("INT", {"default": 6, "min": 1, "max": 64, "tooltip": "【cv2后端】参考邻域半径，越大越平滑越慢"}),
+                "遮罩扩张": ("INT", {"default": 4, "min": 0, "max": 128, "tooltip": "把选区向外扩几像素，确保盖住水印的抗锯齿边缘"}),
+                "边缘羽化": ("INT", {"default": 4, "min": 0, "max": 128, "tooltip": "修复区与原图边界的羽化，软化接缝"}),
             },
             "optional": {
-                "遮罩": ("MASK",),
+                "遮罩": ("MASK", {"tooltip": "【外部遮罩模式】白色区域=要修复的水印位置"}),
             },
         }
 
@@ -164,7 +161,7 @@ class RemoveVisibleWatermark:
                 mask = cv2.dilate(mask, kernel)
 
             if mask.max() == 0:
-                logger.warning("Noctyra 去水印: 掩膜为空，原样返回该帧。")
+                logger.warning("去除可见水印: 掩膜为空，原样返回该帧。")
                 out_images.append(_rgb_uint8_to_tensor(rgb))
                 out_masks.append(torch.zeros((h, w), dtype=torch.float32))
                 continue
@@ -205,5 +202,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "RemoveVisibleWatermark": "去除可见水印（区域修复·Logo/文字）",
+    "RemoveVisibleWatermark": "去除可见水印（区域修复）",
 }

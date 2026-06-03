@@ -33,6 +33,9 @@ except ImportError:
 
 __version__ = "1.0.0"
 
-print(f"\033[34m[ComfyUI-Noctyra]\033[0m v{__version__} \033[92mLoaded\033[0m ({len(NODE_CLASS_MAPPINGS)} nodes)")
+# 前端扩展目录：按下拉/开关动态显隐控制参数（见 web/noctyra_dynamic.js）
+WEB_DIRECTORY = "./web"
 
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
+print(f"\033[34m[Noctyra]\033[0m v{__version__} \033[92m已加载\033[0m {len(NODE_CLASS_MAPPINGS)} 个节点")
+
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]

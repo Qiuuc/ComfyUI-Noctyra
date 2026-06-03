@@ -22,6 +22,19 @@ Noctyra 节点模块
 - watermark_add/     : 添加水印（图像/网格/视频/全屏/文字）
 - watermark_remove/  : 去除水印 + 溯源 + 模型下载
 """
+import logging
+import sys
+
+# 统一控制台输出：所有 logging.getLogger("noctyra") 的消息自动加 [Noctyra] 前缀。
+_nlog = logging.getLogger("noctyra")
+if not getattr(_nlog, "_noctyra_configured", False):
+    _h = logging.StreamHandler(sys.stdout)
+    _h.setFormatter(logging.Formatter("[Noctyra] %(message)s"))
+    _nlog.addHandler(_h)
+    _nlog.setLevel(logging.INFO)
+    _nlog.propagate = False
+    _nlog._noctyra_configured = True
+
 from . import image, video, easyai_api, watermark_add, watermark_remove
 
 NODE_CLASS_MAPPINGS = {}

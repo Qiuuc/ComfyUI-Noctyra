@@ -37,14 +37,19 @@ class SaveVideoNoMetadata:
         self.output_dir = folder_paths.get_output_directory()
         self.type = "output"
 
+    DESCRIPTION = (
+        "保存视频且强制不写入 prompt / workflow 元数据(mp4 udta / mkv tag 都不写 JSON)，"
+        "无论是否加 --disable-metadata 启动都生效。适合发布前清痕迹。"
+    )
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "video": ("VIDEO",),
-                "filename_prefix": ("STRING", {"default": "video/Clean_Video"}),
-                "format": (VideoContainer.as_input(), {"default": "auto"}),
-                "codec": (VideoCodec.as_input(), {"default": "auto"}),
+                "video": ("VIDEO", {"tooltip": "要保存的视频"}),
+                "filename_prefix": ("STRING", {"default": "video/Clean_Video", "tooltip": "输出路径/文件名前缀(可含子目录)，会自动追加序号"}),
+                "format": (VideoContainer.as_input(), {"default": "auto", "tooltip": "封装容器格式，auto=按编码自动选(通常 mp4)"}),
+                "codec": (VideoCodec.as_input(), {"default": "auto", "tooltip": "视频编码器，auto=自动选择"}),
             },
         }
 

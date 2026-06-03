@@ -48,6 +48,53 @@ def pil_to_tensor(pil_image):
     return torch.from_numpy(np.array(pil_image).astype(np.float32) / 255.0).unsqueeze(0)
 
 
+def tensor_to_rgb_uint8(img_tensor):
+    """单张 IMAGE 张量([H,W,C] 0..1) -> 连续 RGB uint8 ndarray（灰度补 3 通道、去 alpha）。
+
+    供 cv2 系去水印节点共用（contiguous 以便 cv2 就地操作）。
+    """
+    arr = np.clip(img_tensor.cpu().numpy() * 255.0, 0, 255).astype(np.uint8)
+    if arr.ndim == 2:
+        arr = np.stack([arr] * 3, axis=-1)
+    if arr.shape[-1] == 4:
+        arr = arr[..., :3]
+    return np.ascontiguousarray(arr)
+
+
+def rgb_uint8_to_tensor(arr):
+    """RGB uint8 ndarray -> ComfyUI IMAGE 张量 [1,H,W,C]"""
+    return torch.from_numpy(arr.astype(np.float32) / 255.0).unsqueeze(0)
+
+
+def safe_print(text):
+    """打印到控制台，自动兼容 GBK 等不支持部分字符的终端编码。"""
+    try:
+        print(text)
+    except Exception:
+        import sys
+        enc = sys.stdout.encoding or "utf-8"
+        print(text.encode(enc, "replace").decode(enc))
+
+
+def resolve_frame_range(n, start_frame, end_frame):
+    """把(帧数, 起始帧, 结束帧)归一为有效 (start, end)；结束帧<0 表示最后一帧。"""
+    start = max(0, start_frame)
+    end = (n - 1) if end_frame < 0 else min(end_frame, n - 1)
+    return start, end
+
+
+def video_fade_opacity(i, start, end, fade_in, fade_out, base_opacity):
+    """第 i 帧的水印不透明度：区间外为 0，区间两端按淡入/淡出帧数线性渐变。"""
+    if i < start or i > end:
+        return 0.0
+    factor = 1.0
+    if fade_in > 0:
+        factor = min(factor, (i - start + 1) / fade_in)
+    if fade_out > 0:
+        factor = min(factor, (end - i + 1) / fade_out)
+    return base_opacity * max(0.0, min(1.0, factor))
+
+
 def mask_to_pil_l(mask_tensor, target_size):
     """MASK 张量 -> 与 target_size 匹配的 L 模式 PIL 图像"""
     m = mask_tensor
