@@ -120,6 +120,9 @@ class RemoveDoubaoWatermark:
     CATEGORY = "Noctyra/水印去除"
 
     def remove(self, 图像, 修复方法, 修复半径, 遮罩扩张, 强制修复):
+        if 图像 is None or len(图像) == 0:
+            return (torch.zeros((0, 1, 1, 3)), torch.zeros((0, 1, 1)), "")
+
         engine = _DoubaoEngine()
         flag = cv2.INPAINT_TELEA if 修复方法 == "Telea" else cv2.INPAINT_NS
         out_images, out_masks, infos = [], [], []

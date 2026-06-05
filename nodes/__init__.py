@@ -21,6 +21,7 @@ Noctyra 节点模块
 - easyai_api         : AI 服务节点
 - watermark_add/     : 添加水印（图像/网格/视频/全屏/文字）
 - watermark_remove/  : 去除水印 + 溯源 + 模型下载
+- motion/            : 视频转 3D 骨骼动作（GVHMR+HaMeR → BVH/GLB，sidecar 跑）
 """
 import logging
 import sys
@@ -35,12 +36,16 @@ if not getattr(_nlog, "_noctyra_configured", False):
     _nlog.propagate = False
     _nlog._noctyra_configured = True
 
-from . import image, video, easyai_api, watermark_add, watermark_remove
-
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
 
-for _mod in (image, video, easyai_api, watermark_add, watermark_remove):
+# 各子模块独立 try：缺某个依赖(如 opencv)只禁用它自己的节点，不连累其它子模块
+for _name in ("image", "video", "easyai_api", "watermark_add", "watermark_remove", "motion"):
+    try:
+        _mod = __import__(f"{__name__}.{_name}", fromlist=[_name])
+    except Exception as _e:
+        _nlog.warning(f"子模块 {_name} 加载失败(其节点不可用): {_e}")
+        continue
     NODE_CLASS_MAPPINGS.update(getattr(_mod, "NODE_CLASS_MAPPINGS", {}))
     NODE_DISPLAY_NAME_MAPPINGS.update(getattr(_mod, "NODE_DISPLAY_NAME_MAPPINGS", {}))
 

@@ -259,6 +259,9 @@ class RemoveGeminiWatermark:
     def remove(self, 图像, 去除方式="直接修复(inpaint)", 检测阈值=0.35, 模板尺寸="自动",
                修复区域扩大=50, 修复方法="Navier-Stokes", 修复半径=10,
                残留修复=True, 修复强度=0.85):
+        if 图像 is None or len(图像) == 0:
+            return (torch.zeros((0, 1, 1, 3)), torch.zeros((0, 1, 1)), "")
+
         engine = _GeminiEngine.get()
         _method = {"Navier-Stokes": "ns", "Telea": "telea", "Gaussian": "gaussian"}[修复方法]
         _flag = cv2.INPAINT_TELEA if 修复方法 == "Telea" else cv2.INPAINT_NS

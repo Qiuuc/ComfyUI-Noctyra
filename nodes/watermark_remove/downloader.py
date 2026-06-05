@@ -306,6 +306,7 @@ class InvisibleWatermarkModelDownloader:
                     total += size
                     lines.append(line)
                 except Exception as e:
+                    logger.exception(f"模型下载失败: {repo}")
                     lines.append(f"[X] {repo}  失败: {repr(e)[:120]}")
         finally:
             os.environ.update(_saved_proxy)  # 恢复代理环境变量

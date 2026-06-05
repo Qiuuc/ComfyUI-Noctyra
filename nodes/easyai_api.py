@@ -56,8 +56,9 @@ def _build_headers(token, json_body=False):
 
 def _download_image(url, timeout=30):
     """下载图片并转换为 ComfyUI 张量格式"""
+    max_bytes = 50 * 1024 * 1024  # 50MB 上限，防恶意/超大 URL 撑爆内存
     try:
-        response = _session.get(url, timeout=timeout)
+        response = _session.get(url, stream=True, timeout=timeout)
         response.raise_for_status()
 
         # 校验响应是图片而非 JSON 错误页
@@ -66,7 +67,17 @@ def _download_image(url, timeout=30):
             logger.error(f"下载图片失败: {url}, 返回非图片内容 Content-Type={ctype}")
             return None
 
-        with BytesIO(response.content) as buf:
+        # 分块读取并限制总体积，超限则放弃
+        content = bytearray()
+        for chunk in response.iter_content(chunk_size=1 << 20):
+            if not chunk:
+                continue
+            content.extend(chunk)
+            if len(content) > max_bytes:
+                logger.warning(f"下载图片超过上限 {max_bytes} 字节，已放弃: {url}")
+                return None
+
+        with BytesIO(bytes(content)) as buf:
             img = Image.open(buf)
             if img.mode != "RGB":
                 img = img.convert("RGB")
@@ -95,11 +106,13 @@ def _parse_and_download(result, action_name):
         raise Exception("无图片返回")
 
     images = []
-    for item in result_data:
+    for idx, item in enumerate(result_data):
         if item.get("type") == "image" and "url" in item:
             img_tensor = _download_image(item["url"])
             if img_tensor is not None:
                 images.append(img_tensor)
+            else:
+                logger.warning(f"{action_name}: 第 {idx} 张图片下载失败，已丢弃: {item.get('url')}")
 
     if not images:
         raise Exception("下载图片失败")

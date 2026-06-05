@@ -94,6 +94,13 @@ class TrimWatermark:
         n = len(图像)
         mode = "按遮罩" if 内容判定.startswith("按遮罩") else 内容判定
 
+        # 遮罩批次数 >1 但短于图像批次：属真正长度不匹配，越界帧回退 mask[0]，只警告一次
+        if (遮罩 is not None and 遮罩.dim() == 3
+                and 1 < 遮罩.shape[0] < n):
+            logger.warning(
+                f"水印裁剪: 遮罩批次({遮罩.shape[0]})短于图像批次({n})，"
+                "越界帧回退到 mask[0]。")
+
         # 逐帧检测内容，取并集包围盒（保证多帧输出同尺寸）
         union = None
         per_frame_content = []

@@ -38,8 +38,13 @@ def plugin_fonts_dir():
 
 
 def tensor_to_pil(tensor):
-    """单张 IMAGE 张量 -> PIL 图像（自动去 batch 维）"""
-    arr = np.clip(255.0 * tensor.cpu().numpy().squeeze(), 0, 255).astype(np.uint8)
+    """单张 IMAGE 张量 -> PIL 图像（仅去 batch 维 / 单通道维，不用裸 squeeze 以免 1px 宽高坍塌）"""
+    t = tensor
+    if t.dim() == 4:          # [1,H,W,C] -> [H,W,C]
+        t = t[0]
+    arr = np.clip(255.0 * t.cpu().numpy(), 0, 255).astype(np.uint8)
+    if arr.ndim == 3 and arr.shape[-1] == 1:   # 单通道 -> 灰度 [H,W]
+        arr = arr[:, :, 0]
     return Image.fromarray(arr)
 
 

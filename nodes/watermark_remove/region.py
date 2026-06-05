@@ -142,6 +142,9 @@ class RemoveVisibleWatermark:
     def remove(self, 图像, 模式, 角落位置, 角落大小, 条带位置, 条带高度,
                自定义X, 自定义Y, 自定义宽, 自定义高,
                后端, 修复方法, 修复半径, 遮罩扩张, 边缘羽化, 遮罩=None):
+        if 图像 is None or len(图像) == 0:
+            return (torch.zeros((0, 1, 1, 3)), torch.zeros((0, 1, 1)))
+
         flag = _INPAINT_FLAGS.get(修复方法, cv2.INPAINT_TELEA)
         use_lama = 后端.startswith("LaMa")
         preset_args = (角落位置, 角落大小, 条带位置, 条带高度,

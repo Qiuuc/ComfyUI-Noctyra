@@ -128,8 +128,17 @@ def _download_to_temp(url):
             ext = ".img"
         tmp = os.path.join(tempfile.gettempdir(), f"noctyra_url_{int(time.time()*1000)}{ext}")
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        max_bytes = 50 * 1024 * 1024  # 50MB 上限，防恶意/超大 URL 撑爆内存与磁盘
         with urllib.request.urlopen(req, timeout=30) as r, open(tmp, "wb") as f:
-            f.write(r.read())
+            total = 0
+            while True:
+                chunk = r.read(1 << 20)  # 1MB
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise RuntimeError(f"下载内容超过上限 {max_bytes} 字节，已中止: {url}")
+                f.write(chunk)
         return tmp
     except Exception as e:
         logger.warning(f"下载网络图片失败: {e}")
