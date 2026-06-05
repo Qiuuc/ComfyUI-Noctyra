@@ -90,6 +90,10 @@ def main():
     pip("--no-build-isolation", "chumpy==0.70")
     pip("--no-build-isolation", "-r", str(REQ))
 
+    # 5b) WiLoR(手部备选,端到端无 detectron2/mmcv)。--no-deps 避免把 ultralytics 降级
+    pip("roma", "huggingface_hub")
+    pip("--no-deps", "git+https://github.com/warmshao/WiLoR-mini.git")
+
     # 6) 代码/权重存在性检查(不自动下,见 README)
     miss = []
     if not (MOCAP / "GVHMR" / "tools" / "demo" / "demo.py").exists():

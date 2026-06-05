@@ -20,6 +20,11 @@ lapx==0.9.4
 yacs==0.1.8
 timm==0.9.12
 
+# WiLoR(手部备选)依赖。wilor_mini 本体由 install.py 用 --no-deps 从 git 装
+# (避免它把 ultralytics 钉到 8.1.34),这里只补它额外需要的纯 python 包。
+roma
+huggingface_hub
+
 # 训练框架 / 配置
 lightning==2.3.0
 pytorch-lightning==2.6.1

@@ -14,7 +14,7 @@
 _MODULES = []
 
 # 可选模块：尚未补齐的不阻断加载
-for _name in ("gvhmr", "hamer", "merge", "export"):
+for _name in ("gvhmr", "hamer", "wilor", "merge", "export"):
     try:
         _mod = __import__(f"{__name__}.{_name}", fromlist=[_name])
         _MODULES.append(_mod)
